@@ -72,6 +72,7 @@ const (
 const (
 	SchemaNotFound                 string = "SchemaNotFound"
 	SchemaNotFoundMessage          string = "Unable to find schema by name %q"
+	SchemaNotSpecified             string = "Schema not specified"
 	InvalidConfig                  string = "InvalidConfiguration"
 	InvalidConfigMessage           string = "Invalid configuration; see .status.fieldErrors for more information"
 	DefaultingInternalError        string = "DefaultingInternalError"

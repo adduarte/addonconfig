@@ -20,8 +20,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"time"
-
 	"github.com/pkg/errors"
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -95,24 +93,36 @@ func (r *AddonConfigReconciler) reconcile(ctx context.Context, addonConfig *addo
 	// AddonConfigDefinitions (stick `required` under `properties` for example`)
 	//   E0309 00:14:47.141174       1 reflector.go:140] pkg/mod/k8s.io/client-go@v0.26.0/tools/cache/reflector.go:169: Failed to watch *v1alpha1.AddonConfigDefinition: failed to list *v1alpha1.AddonConfigDefinition: json: cannot unmarshal array into Go struct field JSONSchemaProps.items.spec.schema.openAPIV3Schema.properties of type v1.JSONSchemaProps
 	// Validating webhook would probably do the trick...
+
+	if addonConfig.Spec.Type == "" {
+		log.Info("AddonConfig is missing reference to AddonConfigDefinition, requeuing")
+		conditions.MarkFalse(addonConfig,
+			addonv1.ValidSchemaCondition,
+			addonv1.SchemaNotFound,
+			addonv1.ConditionSeverityError,
+			addonv1.SchemaNotSpecified)
+		return ctrl.Result{RequeueAfter: RequeTime}, nil
+	}
+
+	// fetch that addonconfigdefinition indicated by addonconfig
 	addonConfigDefinition := &addonv1.AddonConfigDefinition{}
-	acdKey := client.ObjectKey{Namespace: "", Name: addonConfig.Spec.Type}
+	acdKey := client.ObjectKey{Namespace: "", Name: addonConfig.Spec.Type} // TODO (aduarte) what namespace  to use? is "" == default?
 	if err := r.Client.Get(ctx, acdKey, addonConfigDefinition); err != nil {
 		if apierrors.IsNotFound(err) {
 			log.Info("Could not find AddonConfigDefinition for AddonConfig, requeuing", "refName", acdKey.Name)
-
+			// TODO(aduarte) This logs might be superflous, since we write the status to the addonconfig CR itself.
 			conditions.MarkFalse(addonConfig,
 				addonv1.ValidSchemaCondition,
 				addonv1.SchemaNotFound,
 				addonv1.ConditionSeverityError,
 				addonv1.SchemaNotFoundMessage, acdKey.Name)
 
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: RequeTime}, nil
 		}
 	}
 
 	// Manually updated the last observed generation of the schema
-	addonConfig.Status.ObservedSchemaGeneration = addonConfigDefinition.GetGeneration()
+	addonConfig.Status.ObservedSchemaGeneration = addonConfigDefinition.GetGeneration() //TODO(aduarte) should we persiste to CR? Perhaps there is a defer function in play here.
 
 	// Nothing to validate against so let's get out of here
 	if addonConfigDefinition.Spec.Schema == nil {
@@ -127,6 +137,7 @@ func (r *AddonConfigReconciler) reconcile(ctx context.Context, addonConfig *addo
 		return ctrl.Result{}, nil
 	}
 
+	// Flag the CR with o
 	conditions.MarkTrue(addonConfig, addonv1.ValidSchemaCondition)
 
 	internalValidation := &apiextensions.CustomResourceValidation{}
@@ -153,7 +164,7 @@ func (r *AddonConfigReconciler) reconcile(ctx context.Context, addonConfig *addo
 			addonv1.InvalidConfigMessage)
 
 		// This isn't really an error, so we just need to requeue
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: RequeTime}, nil
 	}
 
 	// Explicitly reset the FieldErrors if nothing came up so we don't leave
