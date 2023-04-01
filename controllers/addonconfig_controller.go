@@ -86,6 +86,15 @@ func (r *AddonConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 }
 
 func (r *AddonConfigReconciler) reconcile(ctx context.Context, addonConfig *addonv1.AddonConfig) (ctrl.Result, error) {
+	// - checks that addonConfig.Spec.Type is filled in
+	// - looks for addonconfigdefinition baded on addonconfig
+	// - update last observed version of schema in addonconfig
+	// - mark addonconfig with as having a valid schema
+	// - Generate validator from the schema listed in the addonconfigdefinition
+	// - Validate the addonconfig values against the validator
+	// - Mark addonconfig as validated
+	// - Fill out defaults for nonprovided values and mark addonconfig as defaulted
+
 	log := ctrl.LoggerFrom(ctx)
 	log.Info("Starting AddonConfig reconciliation")
 
@@ -137,19 +146,22 @@ func (r *AddonConfigReconciler) reconcile(ctx context.Context, addonConfig *addo
 		return ctrl.Result{}, nil
 	}
 
-	// Flag the CR with o
+	// Mark the CR as having a valid schema
 	conditions.MarkTrue(addonConfig, addonv1.ValidSchemaCondition)
 
+	// Take a list of validators, the schema and convertion scope, and convert the schema listed in addonConfigDefinition into an internal schema to use for creating validators
 	internalValidation := &apiextensions.CustomResourceValidation{}
 	if err := apiextensionsv1.Convert_v1_CustomResourceValidation_To_apiextensions_CustomResourceValidation(addonConfigDefinition.Spec.Schema, internalValidation, nil); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed converting CRD validation to internal version")
 	}
 
+	// Create the validator from the internalValidation list
 	validator, _, err := validation.NewSchemaValidator(internalValidation)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "unable to convert internal validation to a validator")
 	}
 
+	//use derived validator to validate addonConfig
 	if errs := validation.ValidateCustomResource(nil, addonConfig.Spec.Values, validator); len(errs) > 0 {
 		log.Info("Unable to validate AddonConfig against the AddonConfigDefinition's schema")
 		addonConfig.Status.FieldErrors = make(map[string]addonv1.FieldError, len(errs))
